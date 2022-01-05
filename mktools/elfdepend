@@ -1,0 +1,140 @@
+#!/bin/sh
+# BSD 3-Clause License
+# 
+# Copyright (c) 2022, Phoenix Advice, Keve Müller
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# This file is part of kBSD - https://github.com/kevemueller/kBSD
+
+
+# very crude and simplistic dependency resolver for ELF libraries
+# will emit a list of files that are needed to load the executables provided in the first argument (DSTDIR)
+# will look for dependencies in the subsequent arguments (SRCDIRs)
+
+set -e
+
+ELFDUMP=/usr/bin/elfdump
+
+# emit dependency lines for make depend usage
+MODE=dline
+# emit simple list for rsync usage, note that the list needs to be deduplicated!
+# emits also parent directories
+MODE=list
+
+DST="$1"
+shift
+
+WORK=$(mktemp work.XXXX)
+DONE=$(mktemp done.XXXX)
+#while [ x$1 != x ]; do
+#	echo "$1" >> $WORK
+#	shift
+#done
+#cat >> $WORK
+
+# bootstrap out to-do list with alll executables in the destination directory
+find ${DST} -not -type d -perm +111 | sed "s/^${DST}//" >> $WORK
+
+echo "# dependencies for `cat ${WORK} | paste -s -`"
+#echo WORK is `cat ${WORK}`
+
+start_dline() {
+	echo -n "${DST}$1:"
+}
+dep_dline() {
+	echo -n " ${DST}$1"
+}
+end_dline() {
+	echo -e "\\tCP"
+}
+start_list() {
+}
+dep_list() {
+	x="$1"
+	while [ / != "$x" ]; do
+		echo "$x"
+		x="$(dirname $x)"
+	done
+}
+end_list() {
+}
+
+dolib() {
+	lib=$1
+	shift
+#	echo doing lib ${lib}
+	if [ x"${lib#/}" = x"${lib}" ]; then
+		# relative path
+		for LSRC in "$@"; do
+#			echo looking for ${lib} in ${LSRC}
+			if [ -f ${LSRC}/${lib} ]; then
+				lib=${lib}
+			elif [ -f ${LSRC}/lib/${lib} ]; then
+				lib=/lib/${lib}
+			elif [ -f ${LSRC}/usr/lib/${lib} ]; then
+				lib=/usr/lib/${lib}
+			else 
+#	rare non-standard locations, e.g. /lib/casper
+#				echo need to find ${lib} in nonstandard location
+				lib=$(find ${LSRC} -name "${lib}")
+				lib=${lib#${LSRC}}
+			fi
+			if [ -n "${lib}" ]; then
+				dep_$MODE ${lib}
+# if the library is already part of the destination hiearchy we can skip adding it to our worklist
+				test -f ${DST}/${lib} || echo ${lib} >> $WORK
+				return
+			fi
+		done
+	else
+		# absolute path
+#		echo ${lib} is absolute
+		if [ -n "${lib}" ]; then
+			dep_$MODE ${lib}
+			test -f ${DST}/${lib} || echo ${lib} >> $WORK
+			return
+		fi
+	fi
+}
+
+while read w; do
+	grep -q $w $DONE && continue
+	echo $w >> $DONE
+	start_${MODE} $w
+	for SRC in "$@"; do 
+		test -e ${SRC}/$w || continue
+		${ELFDUMP} -E ${SRC}/$w || continue
+		for lib in $(${ELFDUMP} -i ${SRC}/$w | paste -s -d '  \n' - | sed -nE 's/.*interp:[^/]*(.*)$/\1/p') $(${ELFDUMP} -d ${SRC}/$w | grep -A1  DT_NEEDED | grep -v -e '--' | paste -s -d' \n'  - | sed -nE 's/.*d_val: (.*)$/\1/p'); do
+#			echo doing library ${lib}
+			dolib "${lib}" "$@"
+		done
+	done
+	end_${MODE}
+done < $WORK
+
+rm "${WORK}" "${DONE}"

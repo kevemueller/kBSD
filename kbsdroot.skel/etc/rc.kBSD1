@@ -1,0 +1,122 @@
+#! /bin/sh
+# BSD 3-Clause License
+# 
+# Copyright (c) 2022, Phoenix Advice, Keve Müller
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# This file is part of kBSD - https://github.com/kevemueller/kBSD
+
+# called by the kernel before init, if the loader instructed it to do so with `init_script=/etc/rc.KBSD1`
+
+donet() {
+        test -f /tmp/net.done && exit
+        # setup NETWORKING
+        ifconfig lo0 inet 127.0.0.1/8
+
+        # dhclient needs some writable filesystems, create them
+        mount -t tmpfs -o union  tmpfs /etc
+        mount -t tmpfs tmpfs /var
+        mkdir /var/tmp
+        mount -t tmpfs -o nosuid,noexec,mode=01777 tmpfs /var/tmp
+        mkdir /var/db /var/run /var/log /var/run/dhclient /var/empty
+
+        # dhclient all connected NICs
+        # FIXME: make grep always available
+        for i in `ifconfig -l`; do
+                if [ "$i" != "lo0" ]; then
+                       # if ifconfig $i | grep -q "status: active"; then
+                                dhclient $i
+                       # fi
+                fi
+        done
+        echo > /tmp/net.done
+}
+
+dofile() {
+        if KBSD2_SIZE=$(stat -f %z $1); then
+                KBSD2_MD=$(mdconfig -a -t malloc  -s ${KBSD2_SIZE}b)
+                cat $1 > /dev/${KBSD2_MD}
+                kickit
+        fi
+}
+
+kickit() {
+        kenv init_script="/etc/rc.kBSD2"
+        kenv vfs.root.mountfrom="ufs:/dev/${KBSD2_MD}.uzip"
+        echo ready to rock KBSD2
+        reboot -r
+}
+
+# make ourselves a nice /tmp
+mount -t tmpfs -o nosuid,noexec,mode=01777 tmpfs /tmp
+
+# chainload into KBSD2
+KBSD2_URL="$(kenv kbsd2)"
+if [ "${KBSD2_URL}" ]; then
+        # TODO: accept different url schemes
+        echo Loading KBSD2 from URL ${KBSD2_URL}
+        donet
+        # fetch the MD and reboot into it
+        if KBSD2_SIZE=$(fetch --print-size "${KBSD2_URL}"); then
+                KBSD2_MD=$(mdconfig -a -t malloc  -s ${KBSD2_SIZE}b)
+                fetch -o /dev/${KBSD2_MD} ${KBSD2_URL}
+                kickit
+        else
+                echo Error fetching KBSD2, cannot proceed!
+                exit 1
+        fi
+else
+        # try to get to kbsd2 following heuristics
+        
+        # it might be just there
+        dofile /kbsd2.ffs.uz
+
+        # it might be next to us on the tftp server
+        if kenv boot.tftproot.server ; then
+                # TODO: check if we really need to setup networking as we have kernel networking already working and by definition don't need name resolution
+                donet
+                if ( cd /tmp; echo -e "blocksize 1428\n" get $(kenv boot.tftproot.server):$(kenv boot.tftproot.path)/kbsd2.ffs.uz | tftp ); then
+                        dofile /tmp/kbsd2.ffs.uz
+                fi
+        fi
+
+        # or on a removable disk
+        mkdir /tmp/media
+        for i in /dev/cd*; do
+                echo Looking at ${i}
+                mount -t cd9660 -o ro ${i} /tmp/media
+                dofile /tmp/media/kbsd2.ffs.uz
+                umount /tmp/media
+        done
+        rmdir /tmp/media
+
+        echo No clue on how to find KBSD2, please provide a location in kbsd2 kernel environment!
+        exit 1
+fi
+
+exit 0

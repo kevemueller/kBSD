@@ -1,0 +1,87 @@
+#! /bin/sh
+# BSD 3-Clause License
+# 
+# Copyright (c) 2022, Phoenix Advice, Keve Müller
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# This file is part of kBSD - https://github.com/kevemueller/kBSD
+
+# called by the kernel before init, if the loader or kBSD1 instructed it to do so with `init_script=/etc/rc.KBSD2`
+
+# make rw filesystems, so generic FreeBSD startup is happy
+
+# be aware of the different semantics of a union mountpoint
+# echo Hello >> existing_file  will behave as if you had  issued echo Hello > existing_file
+# rm new_file will expose new_file from the underlying mount point if it exists
+# subdirectories of the mountpoint will not be affected by the union, i.e. remain read-only
+# find on /etc will fail with fts_read: no such file or directory
+# you may want to make appendable files by `cat oldfile > tmpfile && mv tmpfile oldfile`
+# or forget about union alltogrether and copy over the files to a fresh tmpfs 
+
+umount /dev/reroot
+# mdconfig -d -u 0 (if chained from kBSD1)
+
+mount -t tmpfs -o noauto,nosuid,noexec,mode=01777 tmpfs /tmp
+
+# mount -t tmpfs -o noauto,union tmpfs /etc 
+# due to the odd semantics of mount -o union, we rather copy /etc over
+if [ -d /etc ]; then
+    LANG=C tar cf /tmp/etc.tar /etc
+    mount -t tmpfs -o noauto tmpfs /etc
+    LANG=C tar -C / -xf /tmp/etc.tar && rm /tmp/etc.tar 
+    echo >/etc/.kBSD2
+fi
+
+mount -t tmpfs -o noauto tmpfs  /var
+mkdir /var/tmp
+mount -t tmpfs -o noauto,nosuid,noexec,mode=01777 tmpfs /var/tmp
+
+echo >/tmp/.kBSD2
+echo >/var/.kBSD2
+echo >/var/tmp/.kBSD2
+
+# /usr/local/etc needs to be writable including all subdirectories, so we copy it over
+if [ -d /usr/local/etc ]; then
+    LANG=C tar cf /tmp/usr_local_etc.tar /usr/local/etc
+    mount -t tmpfs -o noauto tmpfs /usr/local/etc
+    LANG=C tar -C / -xf /tmp/usr_local_etc.tar && rm /tmp/usr_local_etc.tar 
+    echo >/usr/local/etc/.kBSD2
+fi
+
+# create a nice fstab, note the noauto, so the standard FreeBSD rc scripts don't touch them.
+# TODO: why is noauto option not emitted with mount -p?
+mount -p -t notmpfs > /etc/fstab
+cat >> /etc/fstab <<HERE
+tmpfs   /etc    tmpfs   rw,noauto 0   0
+tmpfs   /tmp    tmpfs   rw,noauto,noexec,nosuid   0   0
+tmpfs   /var    tmpfs   rw,noauto   0   0
+tmpfs   /var/tmp    tmpfs   rw,noauto,noexec,nosuid   0   0
+tmpfs   /usr/local/etc  tmpfs   rw,noauto   0   0
+HERE
+
+exit 0
