@@ -47,18 +47,18 @@ MODE=dline
 MODE=list
 
 DST="$1"
+DSTABS=$(readlink -f "${DST}")
 shift
 
 WORK=$(mktemp work.XXXX)
 DONE=$(mktemp done.XXXX)
-#while [ x$1 != x ]; do
-#	echo "$1" >> $WORK
-#	shift
-#done
-#cat >> $WORK
 
-# bootstrap out to-do list with alll executables in the destination directory
+# bootstrap our to-do list with alll executables in the destination directory
 find ${DST} -not -type d -perm +111 | sed "s/^${DST}//" >> $WORK
+# add also the dynamic dependencies defined in pam.d files
+if [ -d ${DST}/etc/pam.d ]; then 
+	cat /etc/pam.d/* | grep -v ^# | sed -nE 's%.*[[:space:]]([a-z_]+\.so).*%/usr/lib/\1%p' | sort | uniq >> $WORK
+fi
 
 echo "# dependencies for `cat ${WORK} | paste -s -`"
 #echo WORK is `cat ${WORK}`
@@ -84,6 +84,19 @@ dep_list() {
 end_list() {
 }
 
+
+addwork() {
+# if the library is already part of the destination hiearchy we can skip adding it to our worklist
+	test -f ${DST}/$1 || echo $1 >> $WORK
+}
+
+dolibdep() {
+	if [ -n "$1" ]; then
+		dep_$MODE "$1"
+		addwork "$1"
+	fi
+}
+
 dolib() {
 	lib=$1
 	shift
@@ -104,21 +117,12 @@ dolib() {
 				lib=$(find ${LSRC} -name "${lib}")
 				lib=${lib#${LSRC}}
 			fi
-			if [ -n "${lib}" ]; then
-				dep_$MODE ${lib}
-# if the library is already part of the destination hiearchy we can skip adding it to our worklist
-				test -f ${DST}/${lib} || echo ${lib} >> $WORK
-				return
-			fi
+			dolibdep "${lib}"
 		done
 	else
 		# absolute path
 #		echo ${lib} is absolute
-		if [ -n "${lib}" ]; then
-			dep_$MODE ${lib}
-			test -f ${DST}/${lib} || echo ${lib} >> $WORK
-			return
-		fi
+		dolibdep "${lib}"
 	fi
 }
 
@@ -126,10 +130,25 @@ while read w; do
 	grep -q $w $DONE && continue
 	echo $w >> $DONE
 	start_${MODE} $w
-	for SRC in "$@"; do 
-		test -e ${SRC}/$w || continue
-		${ELFDUMP} -E ${SRC}/$w || continue
-		for lib in $(${ELFDUMP} -i ${SRC}/$w | paste -s -d '  \n' - | sed -nE 's/.*interp:[^/]*(.*)$/\1/p') $(${ELFDUMP} -d ${SRC}/$w | grep -A1  DT_NEEDED | grep -v -e '--' | paste -s -d' \n'  - | sed -nE 's/.*d_val: (.*)$/\1/p'); do
+	for SRC in "$@"; do
+		SRCABS="$(readlink -f ${SRC})"
+		test -e "${SRC}"/"$w" || continue
+		if [ -e "${DST}"/"$w" ]; then
+			DEPFILE="${DST}"/"$w"
+			if [ -L ${DEPFILE} ]; then
+				LTGT=$(readlink -f ${DEPFILE})
+				addwork "${LTGT#${DSTABS}}"
+			fi
+		else
+			DEPFILE="${SRC}"/"${w}"
+			test ${MODE} == "list" && dep_list "${w}"
+			if [ -L ${DEPFILE} ]; then
+				LTGT=$(readlink -f ${DEPFILE})
+				addwork "${LTGT#${SRCABS}}"
+			fi
+		fi
+		${ELFDUMP} -E "${DEPFILE}" || continue
+		for lib in $(${ELFDUMP} -i ${DEPFILE} | paste -s -d '  \n' - | sed -nE 's/.*interp:[^/]*(.*)$/\1/p') $(${ELFDUMP} -d ${DEPFILE} | grep -A1  DT_NEEDED | grep -v -e '--' | paste -s -d' \n'  - | sed -nE 's/.*d_val: (.*)$/\1/p'); do
 #			echo doing library ${lib}
 			dolib "${lib}" "$@"
 		done

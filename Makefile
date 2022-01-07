@@ -74,15 +74,11 @@ ZPOOL?=		/usr/local/sbin/zpool
 
 ###
 # FreeBSD make system is very sophisticated, but we don't use it, unfortunately excluding it here with MAKEFLAGS is not working.
-# We would like to keep track of directory changes for now (-w)
 #
-#.MAKEFLAGS:	-w
 #.MAKEFLAGS:	-r 
 
 
 DOWNLOAD_BASE_URL?=	https://download.freebsd.org/ftp/releases
-
-.include "kbsd.images.mk"
 
 # if you have the TXZ, make -DTXZ_DIR=/my/dist
 # if you have them unpacked, make -DTEMPLATE=/my/distfiles
@@ -221,6 +217,7 @@ clean: clean-template
 .if exists(${KBSD_BASE})
 prepare: .PHONY
 	@echo Setting up ${KBSD_BASE} for FreeBSD ${KBSD_VERSION} on ${KBSD_MACHINE}/${KBSD_MACHINE_ARCH}
+	#TODO: check for ${RSYNC} version >=2.6.7
 
 clean: .PHONY
 	-${RMDIR} ${.OBJDIR}
@@ -321,10 +318,8 @@ CD_DEPEND:=			.template_base.done
 CD_OUT:=			cdloader/
 CD_TOOLS+=			/boot/cdboot
 CD_TOOLS+=			/boot/loader  # FIXME this is loader.lua by accident. make sure to use the right source and rename to target name
-ALL_DIRS+=			CD_OUT
 #
 ###
-
 
 
 ###
@@ -332,87 +327,81 @@ ALL_DIRS+=			CD_OUT
 #
 EFIBOOTNAME_amd64:=	bootx64.efi
 EFIBOOTNAME_i386:=	bootia32.efi
-EFIBOOTNAME:=		${EFIBOOTNAME_${KBSD_MACHINE}}
 
 ALL_PAYLOAD+=		EFI
-EFI_OUT:=			efi/
-EFIBOOT_DIR:=		${EFI_OUT}EFI/BOOT
-ALL_DIRS+=			EFIBOOT_DIR
-EFI_TARGET:=		${EFIBOOT_DIR}/${EFIBOOTNAME}
-
-EFI_DEPEND:=		${EFI_TARGET} 
 EFI_DESC:=			Copy FreeBSD loader for EFI architecture to proper place with proper name.
+EFI_OUT:=			efi/
+EFI_TARGET:=		${EFI_OUT}EFI/BOOT/${EFIBOOTNAME_${KBSD_MACHINE}}
+EFI_DEPEND:=		${EFI_TARGET}
 
-# TODO: use cp -a and make the target cp_EFIBOOT.done or pl_EFIBOOT.done
-${EFI_TARGET}:		.template_base.done ${EFIBOOT_DIR} ${TEMPLATE_DIR}/boot/loader_lua.efi
-	${CP} ${.ALLSRC:[-1]:Q} ${.TARGET:Q}
-
-efi.fat: .EFI.done ${EFI_OUT} FAT2M
-
-clean-efifat: .PHONY
-	${RM} -f efi.fat
-
-clean: clean-efifat
+${EFI_TARGET}: .template_base.done ${TEMPLATE_DIR}/boot/loader_lua.efi COPY
 
 
+###
+# EFI service partition
+#
+ALL_PAYLOAD+=		EFIFAT
+EFIFAT_DESC:=		Create an EFI service partition.
+EFIFAT_OUT:=		efifat/
+EFIFAT_PLDEPEND:=	EFI
+EFIFAT_TARGET:=		${EFIFAT_OUT}efi.fat
+EFIFAT_DEPEND:=		${EFIFAT_TARGET}
+
+${EFIFAT_TARGET}: ${EFI_OUT} FAT2M
+	${MKDIR} ${EFIFAT_OUT}
 
 ###
 # directory tree for the loader components from FreeBSD
 #
+# include also the kernel
 # include all modules from LOADER_MODULES
 
-ALL_PAYLOAD+=		LOADERDIR
-
-LOADER_DIR=			loader
-ALL_DIRS+=			LOADER_DIR
-
-LOADERDIR_DESC:=	Prepare loader directory.
-LOADERDIR_OUT:=		${LOADER_DIR}/
-LOADERDIR_DEPEND:=	.template_base.done .template_kernel.done ${TEMPLATE_DIR}/
+ALL_PAYLOAD+=			LOADERDIR
+LOADERDIR_DESC:=		Prepare loader directory.
+LOADERDIR_OUT:=			loader/
+LOADERDIR_DEPEND:=		.template_base.done .template_kernel.done ${TEMPLATE_DIR}/
 LOADERDIR_LOADERLOCAL+=	${KBSD_LOADER_CONF}
 LOADERDIR_LOADERLOCAL+=	${LOADER_MODULES:@x@${x}_load="YES"@:ts\n}
-LOADERDIR_INCLUDE+=	/boot/
-LOADERDIR_INCLUDE+=	/boot/device.hints
-LOADERDIR_INCLUDE+=	/boot/defaults/
-LOADERDIR_INCLUDE+=	/boot/defaults/**
-LOADERDIR_INCLUDE+=	/boot/fonts/
-LOADERDIR_INCLUDE+=	/boot/fonts/**
-LOADERDIR_INCLUDE+=	/boot/images/
-LOADERDIR_INCLUDE+=	/boot/images/**
-LOADERDIR_INCLUDE+=	/boot/kernel/
-LOADERDIR_INCLUDE+=	/boot/kernel/kernel
-LOADERDIR_INCLUDE+=	/boot/kernel/linker.hints
-LOADERDIR_INCLUDE+=	${LOADER_MODULES:@x@/boot/kernel/${x}.ko@}
-LOADERDIR_INCLUDE+=	/boot/lua/
-LOADERDIR_INCLUDE+=	/boot/lua/**
-LOADERDIR_INCLUDE+=	/boot/modules/
+LOADERDIR_INCLUDE+=		/boot/
+LOADERDIR_INCLUDE+=		/boot/device.hints
+LOADERDIR_INCLUDE+=		/boot/defaults/***
+LOADERDIR_INCLUDE+=		/boot/fonts/***
+LOADERDIR_INCLUDE+=		/boot/images/***
+LOADERDIR_INCLUDE+=		/boot/kernel/
+LOADERDIR_INCLUDE+=		/boot/kernel/kernel
+LOADERDIR_INCLUDE+=		/boot/kernel/linker.hints
+LOADERDIR_INCLUDE+=		${LOADER_MODULES:@x@/boot/kernel/${x}.ko@}
+LOADERDIR_INCLUDE+=		/boot/lua/***
+LOADERDIR_INCLUDE+=		/boot/modules/
 
 
-ALL_PAYLOAD+=		LOADERDIRGZ
-LOADERDIRGZ_DIR:=	loader-gz
-ALL_DIRS+=			LOADERDIRGZ_DIR
+###
+# gzipped loader directory
+#
+# inherit all _LOADERLOCAL from LOADERDIR
+# NB: The loader can handle gzip compressed kernel modules, but kldload cannot.
 
+ALL_PAYLOAD+=				LOADERDIRGZ
 LOADERDIRGZ_DESC:=			Prepare gzipped loader directory
-LOADERDIRGZ_OUT:=			${LOADERDIRGZ_DIR}/
+LOADERDIRGZ_OUT:=			loader-gz/
 LOADERDIRGZ_DEPEND:=		.LOADERDIRGZ-gzip.done
 LOADERDIRGZ_LOADERLOCAL+=	${LOADERDIR_LOADERLOCAL}
 
 .LOADERDIRGZ-gzip.done: .LOADERDIR.done 
-	#${RSYNC} -aH -f"+ */" --include="*.gz" --include="*.hints" --include="*.conf*" --exclude="**" ${LOADERDIR_OUT} ${LOADERDIRGZ_OUT}
-	${RSYNC} -aH ${LOADERDIR_OUT} ${LOADERDIRGZ_OUT}
-	${FIND} ${LOADERDIRGZ_OUT} -type f -not \( -name "*.gz" -or -name "*.hints" -or -name "*.conf*" \) -exec ${GZIP} -f9 '{}' \;
+	@echo LOADERDIRGZ - Compressing LOADERDIR tree
+	@${RSYNC} -aH ${LOADERDIR_OUT} ${LOADERDIRGZ_OUT}
+	@${FIND} ${LOADERDIRGZ_OUT} -type f -not \( -name "*.gz" -or -name "*.hints" -or -name "*.conf*" \) -exec ${GZIP} -f9 '{}' \;
 	${TOUCH} ${.TARGET}
 
 clean-LOADERDIRGZ-extra: .PHONY
 	${RM} -f .LOADERDIRGZ-gzip.done
-
-clean-LOADERDIRGZ: clean-LOADERDIRGZ-extra
 
 #
 ###
 
 
 # TODO: simplify by setting _OUT to the skeleton directory, be beware of deleting it!
+# FIXME: we could just dump it right into KBSDx_ROOT_DIR
 ALL_PAYLOAD+=			PLROOTSKEL
 PLROOTSKEL_DESC:=		Copy root skeleton for kBSD
 PLROOTSKEL_DEPEND:=		${.CURDIR}/kbsdroot.skel/
@@ -425,47 +414,8 @@ KBSD2_ROOT_DIR?=	kbsd2root
 
 ALL_DIRS +=	KBSD1_ROOT_DIR KBSD2_ROOT_DIR
 
-CP: .USE
-	#@echo Copying ${.TARGET} because of ..${.OODATE}.. dependencies being younger
-	${RSYNC} --update -aH --include=${.TARGET:C%[^/]+(.*)%\1%:H:H:H:Q}/ --include=${.TARGET:C%[^/]+(.*)%\1%:H:H:Q}/ --include=${.TARGET:C%[^/]+(.*)%\1%:H:Q}/ --include=${.TARGET:C%[^/]+(.*)%\1%:Q} --exclude='**' ${TEMPLATE_DIR}/ ${.TARGET:C%^([^/]+).*$%\1%:Q}/
-	# sometimes the dependency is younger than the target, in order to avoid repeated re-make of the target, touch it with the reference of the youngest of all of the sources that triggered it, include itself in the list
-	@${TOUCH} -r `${STAT} -f%m%t%N ${.TARGET} ${.OODATE} | sort -n | tail -1 | cut -f 2` ${.TARGET}
-
-
-
-LNR2: .USE
-	#${INSTALL} -l r -v ../rescue/${.TARGET:T:Q} ${.TARGET}
-	@${MKDIR} ${.TARGET:H}
-	@${TEST} -e ${.TARGET} -o -L ${.TARGET} || ${LN} -s ../rescue/${.TARGET:T:Q} ${.TARGET}
-	#@${TOUCH} -r ${.TARGET} ${.TARGET:H}
-LNR3: .USE
-	@${MKDIR} ${.TARGET:H}
-	@${TEST} -e ${.TARGET} -o -L ${.TARGET} || ${LN} -s ../../rescue/${.TARGET:T:Q} ${.TARGET}
-	#@${TOUCH} -r ${.TARGET} ${.TARGET:H}
-
-KBSD2_PLKERNEL_MODULES+=	zfs nullfs tmpfs
-
-# classic rescue
-MINI_TOOLS_DEPEND+=	.template_base.done
-
-# TOOLS needed for rc.kBSD1
-MINI_TOOLS+=		/etc/dhclient.conf
-MINI_TOOLS+=		/etc/services
-MINI_TOOLS+= 		/usr/bin/fetch
-MINI_TOOLS+=		/usr/bin/stat
-MINI_TOOLS+=		/usr/bin/tftp 
-
-#MINI_TOOLS+=		/usr/bin/grep	# for convenience
-#MINI_TOOLS+= 		/usr/bin/limits # for dropbear
-#MINI_TOOLS+= 		/usr/bin/ldd	# for convenience
-#MINI_TOOLS+= 		/usr/bin/logger	# rc.subr
-#MINI_TOOLS+=		/usr/sbin/syslogd 
-
-
-
 # norescue
 NORRESCUE_TOOLS_DEPEND+=	.template_base.done
-NORESCUE_TOOLS+=	${MINI_TOOLS}
 NORESCUE_TOOLS+= 	/bin/date
 NORESCUE_TOOLS+= 	/bin/df
 NORESCUE_TOOLS+= 	/bin/hostname
@@ -488,46 +438,52 @@ NORESCUE_TOOLS+=	/usr/bin/more
 NORESCUE_TOOLS+=	/usr/bin/less
 
 
-# generic tools
-KBSD1_PLTOOLS_DEPEND+=	.template_base.done
-KBSD1_PLTOOLS_TOOLS+=	${MINI_TOOLS} ${KBSD1_ADD_TOOLS}
+PASSWD_FILES:=		/etc/master.passwd /etc/passwd /etc/pwd.db /etc/spwd.db
 
+# TOOLS needed for rc.kBSD1 (assuming PLRESCUE)
+KBSD1_PLTOOLS_DEPEND+=			.template_base.done
+KBSD1_PLTOOLS_TOOLS+=			/etc/dhclient.conf
+KBSD1_PLTOOLS_TOOLS+=			/etc/services
+KBSD1_PLTOOLS_TOOLS+=			${PASSWD_FILES}	# dhclient wants to switch to _dhcp user
+KBSD1_PLTOOLS_TOOLS+= 			/usr/bin/fetch
+KBSD1_PLTOOLS_TOOLS+=			/usr/bin/stat
+KBSD1_PLTOOLS_TOOLS+=			/usr/bin/tftp 
+KBSD1_PLTOOLS_TOOLS+=			${KBSD1_ADD_TOOLS}
+KBSD1_PLTOOLS_LOADERLOCAL+=		init_script="/etc/rc.kBSD1"
+
+
+
+# TOOLS needed to bootstrap minimal FreeBSD system (assuming PLRESCUE)
 ETC_ESSENTIALS+=	login.conf nsswitch.conf group services
-ETC_ESSENTIALS+=	newsyslog.conf rc rc.subr syslog.conf defaults/rc.conf 
+ETC_ESSENTIALS+=	newsyslog.conf rc rc.initdiskless rc.subr syslog.conf 
+ETC_ESSENTIALS+=	defaults/rc.conf 
 ETC_ESSENTIALS+=	rc.d/DAEMON rc.d/FILESYSTEMS rc.d/LOGIN rc.d/NETWORKING rc.d/SERVERS 
 ETC_ESSENTIALS+=	rc.d/cleanvar rc.d/dmesg rc.d/ldconfig rc.d/mountcritlocal rc.d/newsyslog rc.d/syslogd rc.d/tmp rc.d/var
 ETC_ESSENTIALS+=	fbtab login.conf login.conf.db gettytab ttys
-KBSD2_PLTOOLS_TOOLS+=	${ETC_ESSENTIALS:@x@/etc/${x}@}
-KBSD2_PLTOOLS_TOOLS+=	${MINI_TOOLS} ${KBSD2_ADD_TOOLS}
-KBSD2_PLTOOLS_TOOLS+=	/usr/bin/limits		
-KBSD2_PLTOOLS_TOOLS+=	/usr/bin/login
-KBSD2_PLTOOLS_TOOLS+=	/usr/libexec/getty
-KBSD2_PLTOOLS_TOOLS+=	/usr/sbin/mtree
-KBSD2_PLTOOLS_TOOLS+=	/usr/sbin/newsyslog
-KBSD2_PLTOOLS_TOOLS+=	/usr/sbin/syslogd
-KBSD2_PLTOOLS_TOOLS+=	/etc/mtree/BSD.var.dist
-KBSD2_PLTOOLS_INCLUDE+=	/etc/
-KBSD2_PLTOOLS_INCLUDE+=	/etc/pam.d/
-KBSD2_PLTOOLS_INCLUDE+=	/etc/pam.d/**
-KBSD2_PLTOOLS_INCLUDE+=	/etc/security/
-KBSD2_PLTOOLS_INCLUDE+=	/etc/security/**
-KBSD2_PLTOOLS_INCLUDE+=	/usr/
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/libpam*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_deny*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_group*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_lastlog*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_login_access*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_nologin*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_opie*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_permit*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_rootok*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_securetty*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_self*
-KBSD2_PLTOOLS_INCLUDE+=	/usr/lib/pam_unix*
-KBSD1_PLTOOLS_LOADERLOCAL+=		init_script="/etc/rc.kBSD1"
 
-KBSD1_PAYLOAD+=		KBSD1_PLRESCUE PLROOTSKEL KBSD1_PLKERNEL KBSD1_PLTOOLS ${KBSD1_ADD_PAYLOAD}
+KBSD2_PLTOOLS_DEPEND+=			.template_base.done
+KBSD2_PLTOOLS_TOOLS+=			${ETC_ESSENTIALS:@x@/etc/${x}@}
+KBSD2_PLTOOLS_TOOLS+=			/sbin/sha256
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/find
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/grep
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/limits
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/login
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/logger
+KBSD2_PLTOOLS_TOOLS+=			/usr/bin/protect
+KBSD2_PLTOOLS_TOOLS+=			/usr/libexec/getty
+KBSD2_PLTOOLS_TOOLS+=			/usr/sbin/mtree
+KBSD2_PLTOOLS_TOOLS+=			/usr/sbin/newsyslog
+KBSD2_PLTOOLS_TOOLS+=			/usr/sbin/syslogd
+KBSD2_PLTOOLS_TOOLS+=			/etc/mtree/BSD.var.dist
+KBSD2_PLTOOLS_TOOLS+=			${KBSD2_ADD_TOOLS}
+KBSD2_PLTOOLS_INCLUDE+=			/etc/
+KBSD2_PLTOOLS_INCLUDE+=			/etc/pam.d/***
+KBSD2_PLTOOLS_INCLUDE+=			/etc/security/***
+
+KBSD2_KERNEL_MODULES+=			zfs nullfs tmpfs
+
+
+KBSD1_PAYLOAD+=		KBSD1_PLRESCUE PLROOTSKEL KBSD1_PLKMOD KBSD1_PLTOOLS ${KBSD1_ADD_PAYLOAD}
 #KBSD2_PAYLOAD+=		KBSD2_PLRESCUE PLROOTSKEL KBSD2_PLROOTPW  KBSD2_PLINSTALL ${KBSD2_ADD_PAYLOAD}
 KBSD2_PAYLOAD+=		KBSD2_PLRESCUE PLROOTSKEL KBSD2_PLROOTPW ${KBSD2_ADD_PAYLOAD}
 
@@ -537,16 +493,29 @@ kbsd1-memtftp_PLDEPEND		+=	KBSD2_IMAGE
 kbsd1-iso_PLDEPEND			+=	KBSD2_IMAGE
 kbsd1-memiso_PLDEPEND		+=	KBSD2_IMAGE
 
+# TODO: also iso/memiso/memtftp?
 kbsd2-nfs_LOADERLOCAL+=		init_script="/etc/rc.kBSD2"
+kbsd2-iso_LOADERLOCAL+=		init_script="/etc/rc.kBSD2"
+kbsd2-memiso_LOADERLOCAL+=	init_script="/etc/rc.kBSD2"
+
+
+.include "kbsd.allrescue.mk"
 
 .for kbsd in KBSD1 KBSD2
 
-PAYLOAD_DIR:=${${kbsd}_ROOT_DIR}
+PAYLOAD_DIR:=					${${kbsd}_ROOT_DIR}
 
+
+
+####
+# The rescue environment including most important mount points and 
+# symbolic links to the rescue tools from their original position
+#
 ALL_PAYLOAD+=					${kbsd}_PLRESCUE
 ${kbsd}_PLRESCUE_DESC:=			Copy rescue environment and create symbolic links to the rescue tools
 ${kbsd}_PLRESCUE_OUT:=			${PAYLOAD_DIR}/
-${kbsd}_PLRESCUE_TOOLS+=		/usr/share/misc/scsi_modes
+${kbsd}_PLRESCUE_DEPEND:=		.template_base.done ${TEMPLATE_DIR}/
+${kbsd}_PLRESCUE_TOOLS+=		/usr/share/misc/scsi_modes	# for camcontrol
 ${kbsd}_PLRESCUE_INCLUDE+=		/dev/
 ${kbsd}_PLRESCUE_INCLUDE+=		/etc/
 ${kbsd}_PLRESCUE_INCLUDE+=		/bin/
@@ -555,22 +524,28 @@ ${kbsd}_PLRESCUE_INCLUDE+=		/mnt/
 ${kbsd}_PLRESCUE_INCLUDE+=		/proc/
 ${kbsd}_PLRESCUE_INCLUDE+=		/root/
 ${kbsd}_PLRESCUE_INCLUDE+=		/sbin/
-${kbsd}_PLRESCUE_INCLUDE+=		/rescue/
-${kbsd}_PLRESCUE_INCLUDE+=		/rescue/**
+${kbsd}_PLRESCUE_INCLUDE+=		/rescue/***
 ${kbsd}_PLRESCUE_INCLUDE+=		/tmp/
 ${kbsd}_PLRESCUE_INCLUDE+=		/usr/bin/
 ${kbsd}_PLRESCUE_INCLUDE+=		/usr/sbin/
 ${kbsd}_PLRESCUE_INCLUDE+=		/var/
 
 # define link dependencies to all rescue files
-.include "kbsd.allrescue.mk"
 .for rescue in ${ALL_RESCUE}
 ${${kbsd}_PLRESCUE_OUT:H}${rescue}:  LNR${rescue:S%/% %g:range:[-1]}
 .endfor
 
-${kbsd}_PLRESCUE_DEPEND:=		.template_base.done  ${ALL_RESCUE:%=${${kbsd}_PLRESCUE_OUT:H}%} ${TEMPLATE_DIR}/
+.${kbsd}_PLRESCUE-links.done: .${kbsd}_PLRESCUE-sync.done ${ALL_RESCUE:%=${${kbsd}_PLRESCUE_OUT:H}%} 
+	${TOUCH} ${.TARGET}
 
+.${kbsd}_PLRESCUE.done:	.${kbsd}_PLRESCUE-links.done
 
+clean-${kbsd}_PLRESCUE-extra: .PHONY
+	${RM} -f .${kbsd}_PLRESCUE-links.done
+
+####
+# PoC full kernel+base
+#
 ALL_PAYLOAD+=					${kbsd}_PLFULLKB
 ${kbsd}_PLFULLKB_DESC:=			Copy complete base and kernel for ${kbsd}
 ${kbsd}_PLFULLKB_OUT:=			${PAYLOAD_DIR}/ 
@@ -583,6 +558,9 @@ ${kbsd}_PLFULLKB_EXCLUDE+=		/etc/rc.d/root 					# cannot be disabled in rc.conf 
 ${kbsd}_PLFULLKB_INCLUDE:=		**
 
 
+####
+# Slim kernel+base, very similar to mfsBSD
+#
 ALL_PAYLOAD+=					${kbsd}_PLSLIMKB
 ${kbsd}_PLSLIMKB_DESC:=			Copy trimmed down base and kernel for ${kbsd}
 ${kbsd}_PLSLIMKB_OUT:=			${PAYLOAD_DIR}/ 
@@ -608,18 +586,25 @@ ${kbsd}_PLSLIMKB_EXCLUDE+=		tests
 ${kbsd}_PLSLIMKB_EXCLUDE+=		*.a
 ${kbsd}_PLSLIMKB_INCLUDE:=		**
 
-ALL_PAYLOAD+=					${kbsd}_PLKERNEL
-${kbsd}_PLKERNEL_DESC:=			Copy kernel modules for ${kbsd}
-${kbsd}_PLKERNEL_DEPEND:=		.template_kernel.done ${TEMPLATE_DIR}/
-${kbsd}_PLKERNEL_OUT:=			${PAYLOAD_DIR}/
-${kbsd}_PLKERNEL_INCLUDE+=		/boot/
-${kbsd}_PLKERNEL_INCLUDE+=		/boot/kernel/
-${kbsd}_PLKERNEL_INCLUDE+=		${${kbsd}_PLKERNEL_MODULES:@x@/boot/kernel/${x}.ko@}
+####
+# Slim kernel+base, very similar to mfsBSD
+#
+ALL_PAYLOAD+=					${kbsd}_PLKMOD
+${kbsd}_PLKMOD_DESC:=			Copy kernel modules for ${kbsd}
+${kbsd}_PLKMOD_DEPEND:=			.template_kernel.done ${TEMPLATE_DIR}/
+${kbsd}_PLKMOD_OUT:=			${PAYLOAD_DIR}/
+${kbsd}_PLKMOD_INCLUDE+=		/boot/
+${kbsd}_PLKMOD_INCLUDE+=		/boot/kernel/
+${kbsd}_PLKMOD_INCLUDE+=		${${kbsd}_KERNEL_MODULES:@x@/boot/kernel/${x}.ko@}
 
+
+####
+# Only bsdinstall and dependencies
+#
 ALL_PAYLOAD+=					${kbsd}_PLINSTALL
 ${kbsd}_PLINSTALL_DESC:=		Copy essential bsdinstall(8) files for ${kbsd}
 ${kbsd}_PLINSTALL_DEPEND:=		.template_base.done ${TEMPLATE_DIR}/
-${kbsd}_PLINSTALL_PLDEPEND:=	${kbsd}_PLKERNEL ${kbsd}_PLTOOLS ${kbsd}_PLROOTPW
+${kbsd}_PLINSTALL_PLDEPEND:=	${kbsd}_PLKMOD ${kbsd}_PLTOOLS ${kbsd}_PLROOTPW
 ${kbsd}_PLINSTALL_OUT:=			${PAYLOAD_DIR}/
 ${kbsd}_PLINSTALL_INCLUDE+=		/boot/
 ${kbsd}_PLINSTALL_INCLUDE+=		/boot/boot
@@ -632,17 +617,13 @@ ${kbsd}_PLINSTALL_INCLUDE+=		/etc/
 ${kbsd}_PLINSTALL_INCLUDE+=		/etc/termcap.small
 ${kbsd}_PLINSTALL_INCLUDE+=		/usr/
 ${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdconfig/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdconfig/**
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdinstall/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdinstall/**
+${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdconfig/***
+${kbsd}_PLINSTALL_INCLUDE+=		/usr/libexec/bsdinstall/***
 ${kbsd}_PLINSTALL_INCLUDE+=		/usr/sbin/
 ${kbsd}_PLINSTALL_INCLUDE+=		/usr/sbin/bsdinstall
 ${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/bsdconfig/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/bsdconfig/**
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/vt/
-${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/vt/**
+${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/bsdconfig/***
+${kbsd}_PLINSTALL_INCLUDE+=		/usr/share/vt/***
 ${kbsd}_PLINSTALL_TOOLS+=       /sbin/geli
 ${kbsd}_PLINSTALL_TOOLS+=       /sbin/graid
 ${kbsd}_PLINSTALL_TOOLS+=		/sbin/sha256
@@ -675,10 +656,9 @@ ${kbsd}_PLINSTALL_TOOLS+=		/usr/sbin/tzsetup
 
 .${kbsd}_PLINSTALL.done: .${kbsd}_PLINSTALL-dist.done
 
-clean-${kbsd}_PLINSTALL-dist: .PHONY
+clean-${kbsd}_PLINSTALL-extra: .PHONY
 	${RM} -f .${kbsd}_PLINSTALL-dist.done
 
-clean-${kbsd}_PLINSTALL: clean-${kbsd}_PLINSTALL-dist
 
 ALL_PAYLOAD+=					${kbsd}_PLTOOLS
 ${kbsd}_PLTOOLS_DESC:=			Install tools with dependencies for ${kbsd}
@@ -693,19 +673,14 @@ ${kbsd}_PLROOTPW_DEPEND+=		.${kbsd}_PLROOTPW-passwd.done
 ${kbsd}_PLROOTPW_DIR:=			${kbsd:tl}-rootpw
 ALL_DIRS+=						${kbsd}_PLROOTPW_DIR
 ${kbsd}_PLROOTPW_OUT:=			${${kbsd}_PLROOTPW_DIR}/
-${kbsd}_PASSWD_FILES:=			master.passwd passwd pwd.db spwd.db
-${kbsd}_PLROOTPW_TOOLS:=		${${kbsd}_PASSWD_FILES:@x@/etc/${x}@}
+${kbsd}_PLROOTPW_TOOLS:=		${PASSWD_FILES}
 
 .${kbsd}_PLROOTPW-passwd.done: .${kbsd}_PLROOTPW-tools.done
 	echo "kbsd" | ${PW} -R ${${kbsd}_PLROOTPW_OUT} usermod root -s /bin/sh -h 0
 	${TOUCH} ${.TARGET}
 
-_clean-passwd-${kbsd}_PLROOTPW: .PHONY
+clean-${kbsd}_PLROOTPW-extra: .PHONY
 	${RM} -f .${kbsd}_PLROOTPW-passwd.done
-
-clean-${${kbsd}_PLROOTPW_OUT:H}: _clean-passwd-${kbsd}_PLROOTPW
-
-
 
 ###
 # Dependency handling
@@ -822,11 +797,11 @@ clean-${kbsd:tl}-iso-extra: .PHONY
 
 clean-${kbsd:tl}-iso: clean-${kbsd:tl}-iso-extra
 
-${kbsd:tl}.iso: .${kbsd:tl}-iso-collect.done efi.fat
+${kbsd:tl}.iso: .EFIFAT.done .${kbsd:tl}-iso-collect.done
 	${MAKEFS} -t cd9660 -Z \
 		-o rockridge,label=kBSD \
 		-o bootimage=i386\;${CD_OUT}boot/cdboot,no-emul-boot \
-		-o bootimage=i386\;efi.fat,no-emul-boot,platformid=efi \
+		-o bootimage=i386\;${EFIFAT_TARGET},no-emul-boot,platformid=efi \
 		${.TARGET:Q} ${${kbsd:tl}-iso_ALLOUT}
 
 .${kbsd:tl}-iso.done: ${kbsd:tl}.iso
@@ -841,11 +816,11 @@ clean-${kbsd:tl}-memiso-extra:
 
 clean-${kbsd:tl}-memiso: clean-${kbsd:tl}-memiso-extra
 
-${kbsd:tl}-mem.iso: .${kbsd:tl}-memiso-collect.done efi.fat
+${kbsd:tl}-mem.iso: .EFIFAT.done .${kbsd:tl}-memiso-collect.done
 	${MAKEFS} -t cd9660 -Z \
 		-o rockridge,label=kBSD \
 		-o bootimage=i386\;${CD_OUT}boot/cdboot,no-emul-boot \
-		-o bootimage=i386\;efi.fat,no-emul-boot,platformid=efi \
+		-o bootimage=i386\;${EFIFAT_TARGET},no-emul-boot,platformid=efi \
 		${.TARGET:Q} ${${kbsd:tl}-memiso_ALLOUT}
 
 .${kbsd:tl}-memiso.done: ${kbsd:tl}-mem.iso
@@ -871,6 +846,19 @@ distclean: distclean-fixdepend
 
 .endif # exists(kbsd-${VERSION}-${MACHINE})
 
+
+
+
+LNR2: .USE
+	#${INSTALL} -l r -v ../rescue/${.TARGET:T:Q} ${.TARGET}
+	@${MKDIR} ${.TARGET:H}
+	@${TEST} -e ${.TARGET} -o -L ${.TARGET} || ${LN} -s ../rescue/${.TARGET:T:Q} ${.TARGET}
+
+LNR3: .USE
+	@${MKDIR} ${.TARGET:H}
+	@${TEST} -e ${.TARGET} -o -L ${.TARGET} || ${LN} -s ../../rescue/${.TARGET:T:Q} ${.TARGET}
+
 .include "kbsd.payload.mk"
 .include "kbsd.collection.mk"
+.include "kbsd.images.mk"
 .include "kbsd.fileutil.mk"

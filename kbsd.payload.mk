@@ -98,6 +98,18 @@ ABI:=				FreeBSD:${KBSD_VERSION_MAJOR}:${KBSD_MACHINE_ARCH}
 .export PKG_DBDIR PKG_CACHEDIR REPOS_DIR ABI
 
 
+# Special copy from ${TEMPLATE_DIR} to any payload target directory
+# TARGET is base/path/./tool/path/file
+# we splt it into two components and copy ${TEMPLATE_DIR}/tool/path/file to base/path/tool/path/file smart preserving all directory/file timestamps
+CP: .USE
+	#@echo Copying ${.TARGET}  tf=${toolfile} because of ..${.OODATE}.. dependencies being younger
+	${targetdir::=${.TARGET:C%(.+/)\./.+%\1%}} ${toolfile::=${.TARGET:C%.+/\.(/.+)%\1%}}
+	${RSYNC} --update -aH ${_::=${toolfile:H:H:H:H:.=} ${toolfile:H:H:H:.=} ${toolfile:H:H:.=} ${toolfile:H:.=}}${_:@v@--include=${v:Q}/@} --include=${toolfile:Q} --exclude='**' ${TEMPLATE_DIR}/ ${targetdir}
+	# sometimes the dependency is younger than the target, in order to avoid repeated re-make of the target, touch it with the reference of the youngest of all of the sources that triggered it, include itself in the list
+	${!empty(.OODATE):?${TOUCH} -r `${STAT} -f%m%t%N ${.TARGET} ${.OODATE} | sort -n | tail -1 | cut -f 2` ${.TARGET}:}
+
+
+
 .for pl in ${ALL_PAYLOAD}
 # main targets
 
@@ -112,6 +124,12 @@ clean-${${pl}_OUT:H}: _clean-${pl}
 ${pl}: .PHONY .${pl}.done
 
 clean-${pl}: .PHONY clean-${${pl}_OUT:H}
+
+.if target(clean-${pl}-extra)
+
+clean-${pl}: clean-${pl}-extra
+
+.endif # target(clean-${pl}-extra)
 
 clean: clean-${pl}
 
@@ -145,12 +163,12 @@ clean-${${pl}_OUT:H}: _clean-sync-${pl}
 .for tool in ${${pl}_TOOLS}
 # TODO: instead of avoiding overriding LNR definition of target, make real tool (if specifically asked for) override rescue tool
 .if !target(${${pl}_OUT:H}${tool})
-${${pl}_OUT:H}${tool}:	CP
+${${pl}_OUT}.${tool}:	CP
 .endif # !target(${${pl}_OUT:H}${tool})
 .endfor # tool in ${${pl}_TOOLS}
 
 
-.${pl}-tools.done: ${${pl}_TOOLS:%=${${pl}_OUT:/=}%}
+.${pl}-tools.done: ${${pl}_TOOLS:%=${${pl}_OUT}.%}
 	${TOUCH} ${.TARGET}
 
 tools-${pl}: .PHONY .${pl}-tools.done

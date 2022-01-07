@@ -46,12 +46,20 @@ donet() {
         mkdir /var/db /var/run /var/log /var/run/dhclient /var/empty
 
         # dhclient all connected NICs
-        # FIXME: make grep always available
         for i in `ifconfig -l`; do
                 if [ "$i" != "lo0" ]; then
-                       # if ifconfig $i | grep -q "status: active"; then
-                                dhclient $i
-                       # fi
+                        set -- $(ifconfig $i)
+                        while [ $# -ge 1 ]; do
+                                if [ "$1" = "status:" ]; then
+                                        if [ "$2" = "active" ]; then 
+                                                dhclient $i
+                                        else
+                                                echo skipping interface $i -- "$2" "$3"
+                                        fi
+                                        break
+                                fi
+                                shift
+                        done
                 fi
         done
         echo > /tmp/net.done
@@ -68,7 +76,12 @@ dofile() {
 kickit() {
         kenv init_script="/etc/rc.kBSD2"
         kenv vfs.root.mountfrom="ufs:/dev/${KBSD2_MD}.uzip"
+        set -- $(mount -t ufs)
+        KBSD1_MD=${1#/dev/}
+        KBSD1_MD=${KBSD1_MD%.uzip}
+        test -n "${KBSD1_MD}" && kenv kbsd2_delmd="${KBSD1_MD}"
         echo ready to rock KBSD2
+        #exit 1
         reboot -r
 }
 
@@ -76,7 +89,7 @@ kickit() {
 mount -t tmpfs -o nosuid,noexec,mode=01777 tmpfs /tmp
 
 # chainload into KBSD2
-KBSD2_URL="$(kenv kbsd2)"
+KBSD2_URL="$(kenv -q kbsd2)"
 if [ "${KBSD2_URL}" ]; then
         # TODO: accept different url schemes
         echo Loading KBSD2 from URL ${KBSD2_URL}
@@ -97,8 +110,7 @@ else
         dofile /kbsd2.ffs.uz
 
         # it might be next to us on the tftp server
-        if kenv boot.tftproot.server ; then
-                # TODO: check if we really need to setup networking as we have kernel networking already working and by definition don't need name resolution
+        if kenv -q boot.tftproot.server ; then
                 donet
                 if ( cd /tmp; echo -e "blocksize 1428\n" get $(kenv boot.tftproot.server):$(kenv boot.tftproot.path)/kbsd2.ffs.uz | tftp ); then
                         dofile /tmp/kbsd2.ffs.uz
@@ -115,7 +127,7 @@ else
         done
         rmdir /tmp/media
 
-        echo No clue on how to find KBSD2, please provide a location in kbsd2 kernel environment!
+        echo No clue on how to find kBSD2, please provide a location in kbsd2 kernel environment!
         exit 1
 fi
 

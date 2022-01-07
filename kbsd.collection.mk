@@ -59,6 +59,9 @@
 #     collect-COLLECTION	- chained to copy-PAYLOAD
 
 
+
+# TODO: combine payload and collection
+
 .for cl in ${ALL_COLLECTION}
 
 ${cl}_OUT?=		${cl}-root/

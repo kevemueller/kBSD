@@ -43,15 +43,16 @@
 # you may want to make appendable files by `cat oldfile > tmpfile && mv tmpfile oldfile`
 # or forget about union alltogrether and copy over the files to a fresh tmpfs 
 
-umount /dev/reroot
-# mdconfig -d -u 0 (if chained from kBSD1)
+
+KBSD2_DELMD="$(kenv -q kbsd2_delmd)"
+test -n "${KBSD2_DELMD}" && mdconfig -d -u ${KBSD2_DELMD#md}
 
 mount -t tmpfs -o noauto,nosuid,noexec,mode=01777 tmpfs /tmp
 
 # mount -t tmpfs -o noauto,union tmpfs /etc 
 # due to the odd semantics of mount -o union, we rather copy /etc over
 if [ -d /etc ]; then
-    LANG=C tar cf /tmp/etc.tar /etc
+    LANG=C tar -C / -cf /tmp/etc.tar etc
     mount -t tmpfs -o noauto tmpfs /etc
     LANG=C tar -C / -xf /tmp/etc.tar && rm /tmp/etc.tar 
     echo >/etc/.kBSD2
@@ -67,7 +68,7 @@ echo >/var/tmp/.kBSD2
 
 # /usr/local/etc needs to be writable including all subdirectories, so we copy it over
 if [ -d /usr/local/etc ]; then
-    LANG=C tar cf /tmp/usr_local_etc.tar /usr/local/etc
+    LANG=C tar -C / -cf /tmp/usr_local_etc.tar usr/local/etc
     mount -t tmpfs -o noauto tmpfs /usr/local/etc
     LANG=C tar -C / -xf /tmp/usr_local_etc.tar && rm /tmp/usr_local_etc.tar 
     echo >/usr/local/etc/.kBSD2
@@ -77,10 +78,10 @@ fi
 # TODO: why is noauto option not emitted with mount -p?
 mount -p -t notmpfs > /etc/fstab
 cat >> /etc/fstab <<HERE
-tmpfs   /etc    tmpfs   rw,noauto 0   0
-tmpfs   /tmp    tmpfs   rw,noauto,noexec,nosuid   0   0
-tmpfs   /var    tmpfs   rw,noauto   0   0
-tmpfs   /var/tmp    tmpfs   rw,noauto,noexec,nosuid   0   0
+tmpfs   /etc            tmpfs   rw,noauto 0   0
+tmpfs   /tmp            tmpfs   rw,noauto,noexec,nosuid   0   0
+tmpfs   /var            tmpfs   rw,noauto   0   0
+tmpfs   /var/tmp        tmpfs   rw,noauto,noexec,nosuid   0   0
 tmpfs   /usr/local/etc  tmpfs   rw,noauto   0   0
 HERE
 

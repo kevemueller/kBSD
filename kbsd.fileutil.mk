@@ -48,10 +48,17 @@ ${dir}:
 
 
 ###
+# copy the last dependency file to the target, make target's parent directories
+#
+COPY: .USE
+	${MKDIR} ${.TARGET:H:Q}
+	${INSTALL} ${.ALLSRC:[-1]:Q} ${.TARGET:Q}
+
+###
 # Apply gzip transfer encoding to a file
 #
 
-GZ: .USEBEFORE 
+GZ: .USEBEFORE
 	${GZIP} -c9 ${.ALLSRC:Q} > ${.TARGET:Q}
 
 #

@@ -45,13 +45,15 @@ FFS: .USEBEFORE
 		${.TARGET:Q} ${.ALLSRC:M*/}
 
 ###
-# Create a 2M sized image file in ${.TARGET} containing a FAT12 filesystem with the files from the directory components of the dependencies ${.ALLSRC}, 
-# label using the tail component of this dependency.
-FAT2M: .USEBEFORE
+# Create a 2MiB sized image file in ${.TARGET} containing a FAT12 filesystem with the files from the directory components of the dependencies ${.ALLSRC}, 
+# label using the tail component of the last dependency dependency.
+FAT2M: .USE
 	${MAKEFS} -t msdos -Z \
 		-o fat_type=12 \
-		-o sectors_per_cluster=1 \
-		-o volume_label=${.ALLSRC:[-1]:S%/$%%:T:tu} \
+		-o drive_heads=2 \
+		-o sectors_per_track=32 \
+		-o volume_label=${.ALLSRC:[-1]:H:T:tu} \
+		-o OEM_string="kBSD" \
 		-s 2048k \
 		${.TARGET:Q} ${.ALLSRC:M*/}
 
