@@ -46,7 +46,7 @@ FFS: .USEBEFORE
 
 ###
 # Create a 2MiB sized image file in ${.TARGET} containing a FAT12 filesystem with the files from the directory components of the dependencies ${.ALLSRC}, 
-# label using the tail component of the last dependency dependency.
+# label using the tail component of the last dependency.
 FAT2M: .USE
 	${MAKEFS} -t msdos -Z \
 		-o fat_type=12 \
@@ -57,6 +57,18 @@ FAT2M: .USE
 		-s 2048k \
 		${.TARGET:Q} ${.ALLSRC:M*/}
 
+###
+# Create an image file in ${.TARGET} containing a FAT filesystem with the files from the directory components of the dependencies ${.ALLSRC}, 
+# label using the tail component of the last dependency dependency.
+# Most BMC have issues with anything but 1440k and file name *.img
+# WIP
+FLPIMAGE: .USE
+	${MAKEFS} -t msdos -Z \
+		-o volume_label=${.ALLSRC:[-1]:H:T:tu} \
+		-o OEM_string="kBSD3" \
+		-o floppy=1440 \
+		-s 1440k \
+		${.TARGET:Q} ${.ALLSRC:M*/}
 
 ###
 # Create a ZFS image.

@@ -43,23 +43,30 @@
 # you may want to make appendable files by `cat oldfile > tmpfile && mv tmpfile oldfile`
 # or forget about union alltogrether and copy over the files to a fresh tmpfs 
 
-
 KBSD2_DELMD="$(kenv -q kbsd2_delmd)"
 test -n "${KBSD2_DELMD}" && mdconfig -d -u ${KBSD2_DELMD#md}
 
 mount -t tmpfs -o noauto,nosuid,noexec,mode=01777 tmpfs /tmp
 
+makeRW() {
+    test -d "$1" || return 0
+    if echo > "$1"/.rw; then
+        rm "$1"/.rw
+    else 
+        LANG=C tar -C / -cf /tmp/rw.tar "${1#/}"
+        mount -t tmpfs -o noauto tmpfs "$1"
+        LANG=C tar -C / -xf /tmp/rw.tar && rm /tmp/rw.tar 
+        echo > "$1"/.kBSD2
+    fi
+}
+
+
 # mount -t tmpfs -o noauto,union tmpfs /etc 
 # due to the odd semantics of mount -o union, we rather copy /etc over
-if [ -d /etc ]; then
-    LANG=C tar -C / -cf /tmp/etc.tar etc
-    mount -t tmpfs -o noauto tmpfs /etc
-    LANG=C tar -C / -xf /tmp/etc.tar && rm /tmp/etc.tar 
-    echo >/etc/.kBSD2
-fi
+makeRW /etc
 
 mount -t tmpfs -o noauto tmpfs  /var
-mkdir /var/tmp
+mkdir /var/db /var/tmp
 mount -t tmpfs -o noauto,nosuid,noexec,mode=01777 tmpfs /var/tmp
 
 echo >/tmp/.kBSD2
@@ -67,12 +74,7 @@ echo >/var/.kBSD2
 echo >/var/tmp/.kBSD2
 
 # /usr/local/etc needs to be writable including all subdirectories, so we copy it over
-if [ -d /usr/local/etc ]; then
-    LANG=C tar -C / -cf /tmp/usr_local_etc.tar usr/local/etc
-    mount -t tmpfs -o noauto tmpfs /usr/local/etc
-    LANG=C tar -C / -xf /tmp/usr_local_etc.tar && rm /tmp/usr_local_etc.tar 
-    echo >/usr/local/etc/.kBSD2
-fi
+makeRW /usr/local/etc
 
 # create a nice fstab, note the noauto, so the standard FreeBSD rc scripts don't touch them.
 # TODO: why is noauto option not emitted with mount -p?
@@ -84,5 +86,170 @@ tmpfs   /var            tmpfs   rw,noauto   0   0
 tmpfs   /var/tmp        tmpfs   rw,noauto,noexec,nosuid   0   0
 tmpfs   /usr/local/etc  tmpfs   rw,noauto   0   0
 HERE
+
+
+# rc.initdiskless has powerful semantics in configuring the next steps, unfortunately it assumes that everything is NFS
+# we need to configure the current system and would like to support all realistic sources of configuration, 
+# kernel command line (e.g. passed from iPXE via loader.efi)
+# local removable media (e.g. BMC mounted floppyies, CD)
+# network paths over http/tftp
+# In case nothing is found, as a bare minimum we would like the connected NICs to try configure themselves via DHCP.
+
+
+# configure network in case we need to fetch a KBSD3_URL file
+donet() {
+    test -f /tmp/net.done && exit
+    # setup NETWORKING
+    ifconfig lo0 inet 127.0.0.1/8
+
+    # dhclient needs some writable directories, create them
+    mkdir /var/db /var/run /var/log /var/run/dhclient /var/empty
+
+    # dhclient all connected NICs
+    for i in `ifconfig -l`; do
+            if [ "$i" != "lo0" ]; then
+                    set -- $(ifconfig $i)
+                    while [ $# -ge 1 ]; do
+                            if [ "$1" = "status:" ]; then
+                                    if [ "$2" = "active" ]; then 
+                                            dhclient $i
+                                    else
+                                            echo skipping interface $i -- "$2" "$3"
+                                    fi
+                                    break
+                            fi
+                            shift
+                    done
+            fi
+    done
+    echo > /tmp/net.done
+}
+
+# called with a filename (that might not exist), to try performing configuration
+kbsd3() {
+    >&2 echo configuring kBSD3 with "$1"
+    mkdir /tmp/kBSD3
+    if LANG=C tar -C /tmp/kBSD3 -xvf "$1" ; then 
+        >&2 echo working kBSD3 with $(ls /tmp/kBSD3)
+        ( cd /tmp/kBSD3
+            for i in skel-*; do 
+                SKEL_DIR=/${i#skel-}; 
+                SKEL_DIR=${SKEL_DIR%.txz};
+                makeRW ${SKEL_DIR}
+                LANG=C tar -C ${SKEL_DIR} -xf $i; 
+            done )
+        for i in /tmp/kBSD3/script/*; do 
+            >&2 echo Sourcing script $i
+            >&2 . $i
+        done
+        cat /tmp/kBSD3/chain || echo "done"    
+    else 
+        rmdir /tmp/kBSD3
+        return 1
+    fi
+}
+
+# if we received a configuration url, work with it
+# else use heuristics to obtain an initial configuration
+
+if ! KBSD3_NEXT_URL="$(kenv -q kbsd3)"; then
+    # try static override
+    if ! KBSD3_NEXT_URL="$(cat /etc/kBSD3)"; then
+        # try NFS server
+        KBSD3_IDS="$(kenv -q boot.netif.hwaddr | tr : -)"
+        KBSD3_IDS="${KBSD3_IDS} $(kenv -q smbios.system.uuid) $(kenv -q smbios.system.serial | tr -d ' ')"
+        KBSD3_IDS="${KBSD3_IDS} default"
+
+        if KBSD3_SERVER="$(kenv -q boot.nfsroot.server)"; then
+            # we have an nfs root, look one above into kbsd3
+            KBSD3_NFS_PATH="$(kenv -q boot.nfsroot.path)"/../kbsd3
+            echo Trying NFS "${KBSD3_SERVER}:${KBSD3_NFS_PATH}"
+            if mount -t nfs -o ro "${KBSD3_SERVER}:${KBSD3_NFS_PATH}" /mnt; then
+                for i in ${KBSD3_IDS}; do 
+                    KBSD3_NEXT_URL=$(kbsd3 /mnt/$i.txz) && break
+                done
+                umount /mnt
+            fi
+        fi
+        # TODO: tftp
+
+        if [ x"${KBSD3_NEXT_URL}" == x ]; then
+            # try disks
+            # TODO: support memstick (i.e. partitions)
+            # TODO: support fd[1-99]
+            for w in 3 6 9; do 
+                ALLDISKS="fd0 $(sysctl -n kern.disks)"
+                echo disks: ${ALLDISKS} 
+                for i in ${ALLDISKS}; do
+                    test -f /tmp/.kBSD3.$i.done && continue
+                    echo > /tmp/.kBSD3.$i.done
+                    case "$i" in
+                        cd*)    mount -t cd9660 -o ro /dev/$i /mnt
+                                ;;
+                        *)      mount -t msdos -o ro /dev/$i /mnt
+                                ;;
+                    esac && (
+                        echo working with $i
+                        for j in ${KBSD3_IDS}; do 
+                            if KBSD3_NEXT_URL=$(kbsd3 /mnt/$j.txz); then
+                                umount /mnt 
+                                break 3
+                            fi
+                        done
+                        umount /mnt
+                    )
+                done
+                echo sleeping ${w} seconds for devices to register
+                sleep ${w}
+            done
+        fi
+
+        # no more options, fallback to set-up configuring network with DHCP
+        KBSD3_NEXT_URL="dhcp"
+    fi
+fi
+
+while true; do
+    case ${KBSD3_NEXT_URL} in
+        done)
+                echo done with kBSD3
+                break
+                ;;
+        dhcp)
+                # setup configuration of connected NICs with DHCP
+                echo synchronous_dhclient=\"YES\" >> /etc/rc.conf.local
+                for i in `ifconfig -l`; do
+                        if [ "$i" != "lo0" ]; then
+                                set -- $(ifconfig $i)
+                                while [ $# -ge 1 ]; do
+                                        if [ "$1" = "status:" ]; then
+                                                if [ "$2" = "active" ]; then 
+                                                        echo ifconfig_$i=\"DHCP\" >> /etc/rc.conf.local
+                                                else
+                                                        echo skipping interface $i -- "$2" "$3"
+                                                fi
+                                                break
+                                        fi
+                                        shift
+                                done
+                        fi
+                done
+                KBSD3_NEXT_URL="done"
+                ;;
+        http://*|https://*)
+                echo chaining to ${KBSD3_NEXT_URL}
+                donet
+                fetch -o /tmp/kbsd3.txz "${KBSD3_NEXT_URL}"
+                KBSD3_NEXT_URL=$(kbsd3 /tmp/kbsd3.txz)
+                rm -f /tmp/kbsd3.txz
+                ;;
+        *)
+                echo cannot chain to ${KBSD3_NEXT_URL}
+                break
+                ;;
+    esac
+done
+
+#exit 1
 
 exit 0

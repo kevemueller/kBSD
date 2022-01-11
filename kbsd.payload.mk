@@ -101,7 +101,7 @@ ABI:=				FreeBSD:${KBSD_VERSION_MAJOR}:${KBSD_MACHINE_ARCH}
 # Special copy from ${TEMPLATE_DIR} to any payload target directory
 # TARGET is base/path/./tool/path/file
 # we splt it into two components and copy ${TEMPLATE_DIR}/tool/path/file to base/path/tool/path/file smart preserving all directory/file timestamps
-CP: .USE
+CP: .USEBEFORE
 	#@echo Copying ${.TARGET}  tf=${toolfile} because of ..${.OODATE}.. dependencies being younger
 	${targetdir::=${.TARGET:C%(.+/)\./.+%\1%}} ${toolfile::=${.TARGET:C%.+/\.(/.+)%\1%}}
 	${RSYNC} --update -aH ${_::=${toolfile:H:H:H:H:.=} ${toolfile:H:H:H:.=} ${toolfile:H:H:.=} ${toolfile:H:.=}}${_:@v@--include=${v:Q}/@} --include=${toolfile:Q} --exclude='**' ${TEMPLATE_DIR}/ ${targetdir}
@@ -161,10 +161,7 @@ clean-${${pl}_OUT:H}: _clean-sync-${pl}
 .if defined(${pl}_TOOLS)
 # emit CP dependencies
 .for tool in ${${pl}_TOOLS}
-# TODO: instead of avoiding overriding LNR definition of target, make real tool (if specifically asked for) override rescue tool
-.if !target(${${pl}_OUT:H}${tool})
 ${${pl}_OUT}.${tool}:	CP
-.endif # !target(${${pl}_OUT:H}${tool})
 .endfor # tool in ${${pl}_TOOLS}
 
 

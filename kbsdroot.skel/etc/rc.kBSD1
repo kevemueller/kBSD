@@ -32,6 +32,7 @@
 # This file is part of kBSD - https://github.com/kevemueller/kBSD
 
 # called by the kernel before init, if the loader instructed it to do so with `init_script=/etc/rc.KBSD1`
+# The responsibility of kBSD1 is to find kBSD2, load it and `reboot -r` into it.
 
 donet() {
         test -f /tmp/net.done && exit
@@ -117,7 +118,7 @@ else
                 fi
         fi
 
-        # or on a removable disk
+        # or on a removable CD
         mkdir /tmp/media
         for i in /dev/cd*; do
                 echo Looking at ${i}
