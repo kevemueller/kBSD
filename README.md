@@ -69,7 +69,7 @@ The filenames in the directory are chosen in this order:
 
 If none of them are found on none of the sources, the default is to create an rc.conf.local file that configures all connected network interfaces with DHCP.
 
-The file can be created with any tool, but easiest is to use the makefile's kbsd3 target for. It can contain additional skeleton files, scripts to be run in the pre-init environment as well as a code to chain to the next context file.
+The file can be created with any tool, but easiest is to use the makefile's kbsd3 target for. It can contain additional skeleton files as well as a code to chain to the next context file.
 
 Special kbsd3 urls are:
 * `done` -- skip all kbsd3 actions
@@ -85,7 +85,7 @@ Clone the repository on a FreeBSD system, examine the Makefile, decide on the ta
 * `make prepare; make -DNODEPEND KBSD2_ADD_PAYLOAD=KBSD2_PLSLIMKB kbsd1-memiso`
   * creates a 101MiB ISO with a slim full FreeBSD base+kernel (no development tools, manuals), that can be sanbooted with Legacy BIOS and plain booted with EFI BIOS
 * `make prepare; make -DNODEPEND KBSD2_ADD_PAYLOAD=KBSD2_PLSLIMKB kbsd1-memtftp`
-  * creates a 101MiB ISO with a slim full FreeBSD base+kernel (no development tools, manuals), that can be iPXE booted on EFI
+  * creates a 101MiB ISO with a slim full FreeBSD base+kernel (no development tools, manuals), that can be [iPXE](https://ipxe.org) booted on EFI
   
 ### For developers:
 * `make prepare; make KBSD2_ADD_PAYLOAD=KBSD2_PLINSTALL KBSD2_ADD_PKG=dropbear kbsd2-nfs`
@@ -97,19 +97,19 @@ see source for advanced usage
 FreeBSD relies on its own loader (coming in different flavours) to be loaded into memory and started. No other advanced loaders support booting FreeBSD.
 In a modern dynamic server environment, one is used to be able to choose and configure kernels/modules using the loader, rely on fast protocols (e.g. http) for the transfer of arbitrarily sized kernels/initial ramdisks.
 
-More specifically the FreeBSD kernel and the ramdisk shall be bootable without the need of tweaking DHCP servers or adding NFS mounts. Files shall be transferred over the network using HTTP or TFTP as a fallback. The primary loader shall be iPXE, the secondary loader an emulated CD environment (e.g. BMC or virtualization)
+More specifically the FreeBSD kernel and the ramdisk shall be bootable without the need of tweaking DHCP servers or adding NFS mounts. Files shall be transferred over the network using HTTP or TFTP as a fallback. The primary loader shall be [iPXE](https://ipxe.org), the secondary loader an emulated CD environment (e.g. BMC or virtualization)
 
 ### Loaders
 #### iPXE 
-iPXE used to boot previous FreeBSD/i386, but since FreeBSD dropped MultiBoot support, this is no longer a solution. 
+[iPXE](https://ipxe.org) used to boot previous FreeBSD/i386, but since FreeBSD dropped MultiBoot support, this is no longer a solution. 
 #### Grub2
 Grub2 used to be able to boot FreeBSD kernel in a sophisticated way, but it does not work with recent versions of FreeBSD.
 #### pxeboot(8)
 The pxeboot must be provided a root-path/next-server by DHCP, it does not support a more dynamic decision on what to boot and always requires the DHCP server as well as an NFS server. It only support root on NFS
 #### loader(8)
-loader expects to be executed by the disk based FreeBSD bootcode, expects a readable filesystem environment, cannot be started from iPXE, cannot take command line arguments (except for when started by the bootcode).
+loader expects to be executed by the disk based FreeBSD bootcode, expects a readable filesystem environment, cannot be started from [iPXE](https://ipxe.org), cannot take command line arguments (except for when started by the bootcode).
 #### loader.efi(8)
-loader.efi is a quite versatile loader, which can be run from the EFI prompt as well as from iPXE directly, it accepts command line arguments. It requires a filesystem, but can work with TFTP.
+loader.efi is a quite versatile loader, which can be run from the EFI prompt as well as from [iPXE](https://ipxe.org) directly, it accepts command line arguments. It requires a filesystem, but can work with TFTP.
 Biggest flaw is that the combined unzipped size of the kernel + initial ramdisk must fit into 64MiB. With the GENERIC kernel being 28MiB already, this leaves ~36MiB for the ramdisk. Note that a gzipped initial ramdisk (in widespread use) will be unpacked during load, and needs to fit unpacked.
 
 ## Problem solution

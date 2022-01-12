@@ -841,18 +841,9 @@ ${kbsd:tl}-mem.iso: .EFIFAT.done .${kbsd:tl}-memiso-collect.done
 #
 KBSD3_DIR?=	${.CURDIR}/default.kbsd3
 
-KBSD3_OUT:=	kbsd3-default-root
-
-
-KBSD3_ROOT: .PHONY
-	${MKDIR} ${KBSD3_OUT}
-	${CP} -a ${KBSD3_DIR}/chain ${KBSD3_OUT}
-	${CP} -a ${KBSD3_DIR}/script ${KBSD3_OUT}
-	( cd ${KBSD3_DIR}/skel; for i in *; do ${TAR} --strip-components 1 -C $$i -cJvf ${KBSD3_OUT:tA}/skel-$$i.txz .; done )
-
-kbsd3/default.txz! KBSD3_ROOT
+kbsd3/default.txz! .PHONY
 	${MKDIR} kbsd3
-	${TAR} -C ${KBSD3_OUT} --strip-components 1  -cJvf ${.TARGET} .
+	${TAR} -C ${KBSD3_DIR} --strip-components 1  -cJvf ${.TARGET} .
 
 
 kbsd3: kbsd3/default.txz

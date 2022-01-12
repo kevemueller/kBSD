@@ -103,7 +103,7 @@ donet() {
     ifconfig lo0 inet 127.0.0.1/8
 
     # dhclient needs some writable directories, create them
-    mkdir /var/db /var/run /var/log /var/run/dhclient /var/empty
+    mkdir /var/run /var/log /var/run/dhclient /var/empty
 
     # dhclient all connected NICs
     for i in `ifconfig -l`; do
@@ -132,17 +132,15 @@ kbsd3() {
     if LANG=C tar -C /tmp/kBSD3 -xvf "$1" ; then 
         >&2 echo working kBSD3 with $(ls /tmp/kBSD3)
         ( cd /tmp/kBSD3
-            for i in skel-*; do 
-                SKEL_DIR=/${i#skel-}; 
-                SKEL_DIR=${SKEL_DIR%.txz};
-                makeRW ${SKEL_DIR}
-                LANG=C tar -C ${SKEL_DIR} -xf $i; 
+            for i in *; do
+                test -d "$i" || continue 
+                SKEL_DIR=/"$(echo $i | tr _ /)"; 
+                >&2 echo skel dir is ..${SKEL_DIR}..
+                makeRW "${SKEL_DIR}"
+                cp -a "$i"/ "${SKEL_DIR}"
             done )
-        for i in /tmp/kBSD3/script/*; do 
-            >&2 echo Sourcing script $i
-            >&2 . $i
-        done
-        cat /tmp/kBSD3/chain || echo "done"    
+        cat /tmp/kBSD3/chain || echo "done"
+        rm -rf /tmp/kBSD3    
     else 
         rmdir /tmp/kBSD3
         return 1
@@ -204,12 +202,15 @@ if ! KBSD3_NEXT_URL="$(kenv -q kbsd3)"; then
             done
         fi
 
-        # no more options, fallback to set-up configuring network with DHCP
-        KBSD3_NEXT_URL="dhcp"
+        if [ x"${KBSD3_NEXT_URL}" == x ]; then
+            # no more options, fallback to set-up configuring network with DHCP
+            KBSD3_NEXT_URL="dhcp"
+        fi
     fi
 fi
 
 while true; do
+    echo Working with ..${KBSD3_NEXT_URL}..
     case ${KBSD3_NEXT_URL} in
         done)
                 echo done with kBSD3
